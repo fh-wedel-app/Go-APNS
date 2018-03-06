@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"crypto/tls"
 	"net/http"
+	"net/url"
 
 	"encoding/json"
 	"fmt"
 
 	"golang.org/x/net/http2"
+
+	"os"
 )
 
 //Connection stores properties that are necessary to perform a request to Apples servers.
@@ -52,7 +55,23 @@ func NewConnection(pathname string, key string) (*Connection, error) {
 	//no check if Certificate is present to fail hard if this requirement is not met
 	tlsConfig.BuildNameToCertificate()
 
-	transport := &http2.Transport{TLSClientConfig: tlsConfig}
+	var transport *http.Transport
+	if proxy, ok := os.LookupEnv("HTTPS_PROXY"); ok {
+		proxyURL, err := url.Parse(proxy)
+		if err != nil {
+			return nil, err
+		}
+		transport = &http.Transport{
+			Proxy:           http.ProxyURL(proxyURL),
+			TLSClientConfig: tlsConfig}
+
+	} else {
+		transport = &http.Transport{TLSClientConfig: tlsConfig}
+	}
+
+	if err := http2.ConfigureTransport(transport); err != nil {
+		return nil, err
+	}
 
 	c.HTTPClient = http.Client{Transport: transport}
 	//Default Host is Development Host.
