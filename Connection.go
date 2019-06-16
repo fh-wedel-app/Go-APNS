@@ -12,6 +12,8 @@ import (
 	"golang.org/x/net/http2"
 
 	"os"
+
+	"sync"
 )
 
 //Connection stores properties that are necessary to perform a request to Apples servers.
@@ -111,7 +113,10 @@ func (c *Connection) Push(message *Message, tokens []string, responseChannel cha
 		return
 	}
 
-	for index, token := range tokens {
+	var wg sync.WaitGroup // for coordinated closing of responsChannel
+	wg.Add(len(tokens))
+
+	for _, token := range tokens {
 
 		url := fmt.Sprintf("%v/3/device/%v", c.Host, token)
 		request, err := http.NewRequest("POST", url, bytes.NewBuffer(dataToSend))
@@ -125,10 +130,10 @@ func (c *Connection) Push(message *Message, tokens []string, responseChannel cha
 		}
 
 		configureHeader(request, message)
-		push := func(token string, responseChannel chan Response, shouldCloseChannelWhenDone bool) {
-			if shouldCloseChannelWhenDone {
-				defer close(responseChannel)
-			}
+
+		push := func(token string, responseChannel chan Response) {
+
+			defer wg.Done() // signal end of goroutine when done
 
 			httpResponse, err := c.HTTPClient.Do(request)
 			if httpResponse != nil {
@@ -181,11 +186,14 @@ func (c *Connection) Push(message *Message, tokens []string, responseChannel cha
 				responseChannel <- response
 			}
 		}
-		shouldCloseChannelWhenDone := index == (len(tokens) - 1)
-		go push(token, responseChannel, shouldCloseChannelWhenDone)
 
+		go push(token, responseChannel)
 	}
 
+	go func() {
+		wg.Wait() // wait for all push goroutines to finish
+		close(responseChannel)
+	}()
 }
 
 //configureHader takes a Message and a htto.Request. It sets the header properties
